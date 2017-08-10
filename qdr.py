@@ -21,17 +21,61 @@ except ImportError:
 subpath_format = 'dists/{suite}/{category}/{arch}'
 
 
-def get_digest(path, kind):
+def deb_hashcache_path(deb_path, kind):
+    root = os.path.dirname(deb_path)
+    name = os.path.basename(deb_path)
+
+    # chunk the subfolder into subfolders 5 levels down. trivial way of trying to avoid too many files in
+    # one folder which can cause serious file system performance degredation. it's possible another
+    # bucketing strategy would be better.
+    chunk_size = 5
+    tokens = [name[pos:pos + chunk_size] for pos in xrange(0, len(name), chunk_size)]
+
+    cache_path = os.path.join(root, '.hash_cache')
+    for token in tokens:
+        cache_path = os.path.join(cache_path, token)
+    cache_path = os.path.join(cache_path, kind + '.txt')
+
+    return cache_path
+
+
+def get_digest(deb_path, kind):
+
+    hash_type = kind.__name__.split('_')[-1]
+
+    cache_path = deb_hashcache_path(deb_path, hash_type)
+
+    if os.path.exists(cache_path):
+        if os.path.getmtime(cache_path) > os.path.getmtime(deb_path):
+            try:
+                with open(cache_path, 'r') as h:
+                    print 'Loading %s hash for %s from cache..' % (hash_type, deb_path)
+                    read_hash = h.read().strip()
+                    if len(read_hash) > 30:
+                        return read_hash
+            except IOError:
+                print 'Failed loading %s from %s for %s' % (hash_type, cache_path, deb_path)
+
     digest = kind()
 
-    with open(path) as h:
+    with open(deb_path) as h:
         while True:
             buff = h.read(1024)
             if buff == '':
                 break
             digest.update(buff)
 
-    return digest.hexdigest()
+    finished_hash = digest.hexdigest()
+
+    try:
+        if not os.path.exists(os.path.dirname(cache_path)):
+            os.makedirs(os.path.dirname(cache_path))
+            with open(cache_path, 'w') as h:
+                h.write(finished_hash)
+    except (IOError, OSError) as e:
+        print 'Failed writing cached hash to %s: %s' % (cache_path, e)
+
+    return finished_hash
 
 
 def pathstrip(path, tostrip):
