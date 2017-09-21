@@ -10,7 +10,9 @@ import argparse
 import shutil
 import hashlib
 import sys
+import json
 from email.Utils import formatdate
+
 
 def get_deb_package_class():
     DebPackage = None
@@ -42,7 +44,7 @@ DebPackage = get_deb_package_class()
 subpath_format = 'dists/{suite}/{category}/{arch}'
 
 
-def deb_hashcache_path(deb_path, kind):
+def deb_hashcache_path(deb_path):
     root = os.path.dirname(deb_path)
     name = os.path.basename(deb_path)
 
@@ -55,48 +57,61 @@ def deb_hashcache_path(deb_path, kind):
     cache_path = os.path.join(root, '.hash_cache')
     for token in tokens:
         cache_path = os.path.join(cache_path, token)
-    cache_path = os.path.join(cache_path, kind + '.txt')
+    cache_path = os.path.join(cache_path, 'digests.json')
 
     return cache_path
 
 
-def get_digest(deb_path, kind):
+def get_digests(deb_path):
+    cache_path = deb_hashcache_path(deb_path)
 
-    hash_type = kind.__name__.split('_')[-1]
-
-    cache_path = deb_hashcache_path(deb_path, hash_type)
-
+    # If we have these digests cached for this deb, and if the deb isn't
+    # newer, just use that instead.
     if os.path.exists(cache_path):
         if os.path.getmtime(cache_path) > os.path.getmtime(deb_path):
             try:
                 with open(cache_path, 'r') as h:
-                    print 'Loading %s hash for %s from cache..' % (hash_type, deb_path)
-                    read_hash = h.read().strip()
-                    if len(read_hash) > 30:
-                        return read_hash
-            except IOError:
-                print 'Failed loading %s from %s for %s' % (hash_type, cache_path, deb_path)
+                    return json.load(h)
+            except (IOError, ValueError) as e:
+                print 'Failed loading cache from file %s: %s' % (cache_path, e)
 
-    digest = kind()
+    # populate each digest at once to avoid reading the file multiple times.
+    md5_digest = hashlib.md5()
+    sha1_digest = hashlib.sha1()
+    sha256_digest = hashlib.sha256()
 
-    with open(deb_path) as h:
-        while True:
-            buff = h.read(1024)
-            if buff == '':
-                break
-            digest.update(buff)
+    try:
+        with open(deb_path) as h:
+            while True:
+                buff = h.read(1024)
+                if buff == '':
+                    break
+                md5_digest.update(buff)
+                sha1_digest.update(buff)
+                sha256_digest.update(buff)
+    except IOError as e:
+        print 'Failed opening %s to generate hashes. Will use blank hashes, which may cause problems. %s' % (deb_path, e)
+        return {
+            'md5': '',
+            'sha1': '',
+            'sha256': '',
+        }
 
-    finished_hash = digest.hexdigest()
+    result = {
+        'md5': md5_digest.hexdigest(),
+        'sha1': sha1_digest.hexdigest(),
+        'sha256': sha256_digest.hexdigest(),
+    }
 
     try:
         if not os.path.exists(os.path.dirname(cache_path)):
             os.makedirs(os.path.dirname(cache_path))
-            with open(cache_path, 'w') as h:
-                h.write(finished_hash)
+        with open(cache_path, 'w') as h:
+            json.dump(result, h, indent=2)
     except (IOError, OSError) as e:
         print 'Failed writing cached hash to %s: %s' % (cache_path, e)
 
-    return finished_hash
+    return result
 
 
 def pathstrip(path, tostrip):
@@ -113,12 +128,13 @@ def get_debs(root):
 
 
 def generate_package_block(path, filename):
+    digests = get_digests(path)
     parts = []
     parts.append(DebPackage(path).control_content('control').strip())
     parts.append('Filename: %s' % filename)
-    parts.append('MD5sum: %s' % get_digest(path, hashlib.md5))
-    parts.append('SHA1: %s' % get_digest(path, hashlib.sha1))
-    parts.append('SHA256: %s' % get_digest(path, hashlib.sha256))
+    parts.append('MD5sum: %s' % digests['md5'])
+    parts.append('SHA1: %s' % digests['sha1'])
+    parts.append('SHA256: %s' % digests['sha256'])
     parts.append('Size: %s' % os.path.getsize(path))
     return '\n'.join(parts)
 
@@ -179,8 +195,11 @@ def generate_indexes(path, suite, category, arch, newpackages=None):
                 dest.write(buff)
 
     print 'Generating %s' % release_file
-    release_sources = [packages_file, packages_file_gz]
-    hashes = (('MD5Sum', hashlib.md5), ('SHA1', hashlib.sha1), ('SHA256', hashlib.sha256))
+    release_sources = {
+        packages_file: get_digests(packages_file),
+        packages_file_gz: get_digests(packages_file_gz)
+    }
+    hashes = (('MD5Sum', 'md5'), ('SHA1', 'sha1'), ('SHA256', 'sha256'))
     with open(release_file, 'w') as h:
         h.write('Date: %s\n' % formatdate())
         h.write('Suite: %s\n' % suite)
@@ -189,7 +208,7 @@ def generate_indexes(path, suite, category, arch, newpackages=None):
             h.write('%s:\n' % label)
             for filename in release_sources:
                 size = os.path.getsize(filename)
-                h.write(' %-64s %s %s\n' % (get_digest(filename, kind), size, pathstrip(filename, release_trimto)))
+                h.write(' %-64s %s %s\n' % (release_sources[filename][kind], size, pathstrip(filename, release_trimto)))
 
 
 def main():
