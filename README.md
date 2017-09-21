@@ -2,6 +2,13 @@
 
 This will create the local debian package folder structure and necessary boilerplate for apt/apt-get to work.
 
+## Installation
+
+quickdebrepo is hosted on pypi, and requires python2.
+
+    sudo apt-get install python2.7 python-apt
+    pip install quickdebrepo
+
 ## Usage
 
 Place your deb files in /path/to/debs, and run the following to import them and generate
@@ -15,12 +22,6 @@ with the exception of GPG signed packages, so you will get signing/authenticatio
     deb [arch=amd64] http://apt.yourdomain.com/ubuntu trusty main
 
 All this assuming `apt.yourdomain.com` is a web server serving /var/www/html/ as the docroot.
-
-## Dependencies
-
-Currently, this is written for Python 2.7.
-
-    sudo apt-get install python2.7 python-apt
 
 ## TODO
 
