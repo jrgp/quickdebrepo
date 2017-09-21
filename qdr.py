@@ -12,12 +12,33 @@ import hashlib
 import sys
 from email.Utils import formatdate
 
-try:
-    from apt.debfile import DebPackage
-except ImportError:
-    print 'Please run apt-get install python-apt (or run this outside of a venv)'
+def get_deb_package_class():
+    DebPackage = None
+    try:
+        from apt.debfile import DebPackage
+    except ImportError:
+        pass
+    else:
+        return DebPackage
+
+    # if we're in a venv, this won't be in our path by default,
+    # so add it and try to import it after that.
+    if os.path.exists('/usr/lib/python2.7/dist-packages/apt'):
+        import site
+        site.addsitedir('/usr/lib/python2.7/dist-packages')
+
+        try:
+            from apt.debfile import DebPackage
+        except ImportError:
+            pass
+        else:
+            return DebPackage
+
+    print 'Please run apt-get install python-apt (or try running this outside of a venv)'
     sys.exit(1)
 
+
+DebPackage = get_deb_package_class()
 subpath_format = 'dists/{suite}/{category}/{arch}'
 
 
